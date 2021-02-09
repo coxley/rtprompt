@@ -54,7 +54,7 @@ type Prompt struct {
 }
 
 // New prompt instance w/ sane defaults
-func New(pfx string, callback func(string, bool, bool) string) *Prompt {
+func New(pfx string, callback Callback) *Prompt {
 	return &Prompt{
 		Prefix:   pfx,
 		Callback: callback,
