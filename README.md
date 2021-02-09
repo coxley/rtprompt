@@ -95,19 +95,19 @@ func main() {
 
 These should cover most use-cases but happy to expand them.
 
-* **CTRL+A**: Beginning of line
-* **HOME**: Beginning of line
-* **CTRL+B**: Move left
-* **Left arrow**: Move left
-* **CTRL-C**: SIGINT
-* **CTRL+F**: Move right
-* **Right arrow**: Move right
-* **CTRL+D**: Delete forward
-* **CTRL+E**: End of line
-* **END**: End of line
-* **CTRL+U**: Remove all text before cursor
-* **CTRL+K**: Remove all text after cursor
-* **CTRL+W**: Remove the previous word
 * **ALT+B**: Go back a word
 * **ALT+F**: Go forward a word
+* **CTRL+A**: Beginning of line
+* **CTRL+B**: Move left
+* **CTRL+D**: Delete forward
+* **CTRL+E**: End of line
+* **CTRL+F**: Move right
+* **CTRL+K**: Remove all text after cursor
+* **CTRL+U**: Remove all text before cursor
+* **CTRL+W**: Remove the previous word
+* **CTRL-C**: SIGINT
+* **END**: End of line
 * **Enter**: Finish input
+* **HOME**: Beginning of line
+* **Left arrow**: Move left
+* **Right arrow**: Move right
