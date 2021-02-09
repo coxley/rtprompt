@@ -139,7 +139,7 @@ func (p *Prompt) readInput(textCh chan textResult) {
 			}
 
 			lastUpdate = time.Now()
-			textCh <- textResult{p.text, e.Key != keyboard.KeyTab}
+			textCh <- textResult{p.text, e.Key == keyboard.KeyTab}
 		case res := <-callbackCh:
 			// New text entered before we could read the result
 			if res.ts.Before(lastUpdate) {
