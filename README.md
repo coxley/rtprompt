@@ -15,7 +15,8 @@ feel like opening a new window.
 Turns out this didn't exist, and wasn't nearly as straight forward as I had
 hoped. We have to put the terminal into raw mode to get unbuffered input, but
 because it's a text prompt we need to recreate the keybindings that Linux's
-terminal discipline uses.
+terminal discipline uses. Fortunately when we're done prompting, we can put
+everything back the way it was!
 
 # Example (Basic)
 
