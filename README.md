@@ -4,7 +4,7 @@
 
 A command-line prompt that looks normal, but can show results as users type.
 
-![Basic Example](https://raw.githubusercontent.com/coxley/rtprompt/master/examples/basic.gif)
+![Basic Example](https://raw.githubusercontent.com/coxley/rtprompt/master/examples/basic2.gif)
 
 # Why?
 
