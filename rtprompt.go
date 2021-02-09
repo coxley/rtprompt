@@ -1,4 +1,4 @@
-package rtprompt
+package main
 
 import (
 	"fmt"
@@ -25,6 +25,10 @@ type Prompt struct {
 	//
 	// If callback returns a value after input has changed again, it'll be
 	// dropped.
+	//
+	// Callback is initialized with zero-values before keypresses are read.
+	// This is gives you a chance to show full output up front, and let user
+	// input reduce it.
 	Callback func(s string, tab bool) string
 
 	// Lines between the prompt and output from callback (default: 2)
@@ -79,6 +83,10 @@ func (p *Prompt) Start() chan struct{} {
 		for _ = range textCh {
 			continue
 		}
+		fmt.Println()
+		// Bash doesn't auto-clear lines beneath the prompt when a command
+		// ends. Let's clear what we've output so far from callback.
+		p.print(strings.Repeat("\n", 25), 1)
 		done <- struct{}{}
 		close(done)
 	}()
@@ -114,7 +122,12 @@ func (p *Prompt) readInput(textCh chan textResult) {
 	}
 	callbackCh := make(chan cbResult)
 	go func() {
+		// Initialize with empty string
+		callbackCh <- cbResult{time.Now(), p.Callback("", false)}
 		for res := range textCh {
+			if p.Debug {
+				p.print(fmt.Sprintf("tab: %v", res.tab), 12)
+			}
 			callbackCh <- cbResult{time.Now(), p.Callback(res.text, res.tab)}
 		}
 	}()
@@ -261,7 +274,7 @@ func (p *Prompt) handleKey(key keyboard.KeyEvent, cleanup func()) bool {
 
 	if p.Debug {
 		debugText := fmt.Sprintf("text=%v\npos=%v\n", p.text, p.pos)
-		p.print(debugText, 10)
+		p.print(debugText, 15)
 	}
 	return true
 }
