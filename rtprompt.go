@@ -1,35 +1,42 @@
-package main
+package rtprompt
 
 import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/coxley/keyboard"
 	"golang.org/x/term"
 )
 
+// Callback to notify when input changes
+//
+// Receives the input value and whether a tab was just pressed. Called in-line
+// with each key press so heavy processing should be done outside of the
+// callback path.
+//
+// Callback is initialized with zero-values before keypresses are read.
+// This is gives you a chance to show full output up front, and let user
+// input reduce it.
+//
+// Tab and Enter keypresses will set the respective booleans. The input text
+// will be passed as well.
+//
+// It's possible to split Callback into onKeypress, onTab, and onEnter. If this
+// is something you want please submit an issue on the repo. :)
+type Callback func(s string, tab bool, enter bool) string
+
 // Prompt lets a user type input that is sent to a callback in realtime
 //
-// Callback is only invoked when the input changes or <TAB> is pressed. The
-// return string is shown below the prompt and rewritten when changed.
+// Callback is invoked when the input changes or Tab or Enter are pressed.  The
+// return value is shown below the prompt and rewritten when changed.
 //
 // This allows for a reactive CLI that isn't full-on curses/TUI. It should feel
 // like a normal tool.
 type Prompt struct {
 	// What the user sees in front of their input
-	Prefix string
-
-	// Receives the input value and whether a tab was just pressed
-	//
-	// If callback returns a value after input has changed again, it'll be
-	// dropped.
-	//
-	// Callback is initialized with zero-values before keypresses are read.
-	// This is gives you a chance to show full output up front, and let user
-	// input reduce it.
-	Callback func(s string, tab bool) string
+	Prefix   string
+	Callback Callback
 
 	// Lines between the prompt and output from callback (default: 2)
 	Padding int
@@ -40,10 +47,14 @@ type Prompt struct {
 	text string
 	pos  int  // position of cursor
 	tab  bool // Did the user just press tab?
+
+	// How many lines did we write on? We'll need to clear them when finished,
+	// else Bash prompts will be unhappy.
+	writtenLineCnt int
 }
 
 // New prompt instance w/ sane defaults
-func New(pfx string, callback func(string, bool) string) *Prompt {
+func New(pfx string, callback func(string, bool, bool) string) *Prompt {
 	return &Prompt{
 		Prefix:   pfx,
 		Callback: callback,
@@ -58,54 +69,40 @@ type textResult struct {
 	tab  bool
 }
 
-// Start begins the prompt and feeds updates into the callback until Enter is pressed.
+// Wait begins the prompt and feeds updates into the callback until Enter is pressed.
 //
-// From when this starts, until it's finished, the terminal is put into raw
-// mode. If you write to stdout/stderr during that time, it will throw off the
-// formatting; badly.
+// The terminal is put into raw mode until this returns. Avoid writing to
+// stdout/stderr until then else it will throw off the formatting. Badly.
 //
 // Most of the logic making it feel like a normal prompt is from careful
 // repositioning of the ANSI cursor.
-//
-// Return channel given a single value, and closed, on Enter.
-func (p *Prompt) Start() chan struct{} {
+func (p *Prompt) Wait() {
 	if p.Callback == nil {
-		p.Callback = func(string, bool) string { return "" }
+		p.Callback = func(string, bool, bool) string { return "" }
 	}
 
-	textCh := make(chan textResult)
-	go p.readInput(textCh)
-
-	// No need to expose internal text channel. Sync single value channel with
-	// the cancellation of textCh.
-	done := make(chan struct{}, 1)
-	go func() {
-		for _ = range textCh {
-			continue
-		}
-		fmt.Println()
-		// Bash doesn't auto-clear lines beneath the prompt when a command
-		// ends. Let's clear what we've output so far from callback.
-		p.print(strings.Repeat("\n", 25), 1)
-		done <- struct{}{}
-		close(done)
-	}()
-	return done
+	p.readInput()
 }
 
 // Set terminal mode to raw, set up goroutines, and start reading keypresses
-func (p *Prompt) readInput(textCh chan textResult) {
+func (p *Prompt) readInput() {
 
 	// Terminal must be set to raw mode
 	oldState, err := term.MakeRaw(0)
 	if err != nil {
 		panic(err)
 	}
-
-	// Restore terminal *before* closing the channel. Can fuck up prompt
-	// otherwise. (defers are LIFO)
-	defer close(textCh)
 	defer term.Restore(0, oldState)
+
+	// define cleanup so we can use before SIGINT too
+	cleanupFunc := func() {
+		term.Restore(0, oldState)
+		// Bash doesn't auto-clear lines beneath the prompt when a command
+		// ends. Let's clear what we've output so far from callback.
+		p.print(strings.Repeat("\n", p.writtenLineCnt), 1)
+		fmt.Println()
+	}
+	defer cleanupFunc()
 
 	keyCh, err := keyboard.GetKeys(10)
 	if err != nil {
@@ -113,27 +110,19 @@ func (p *Prompt) readInput(textCh chan textResult) {
 	}
 	defer keyboard.Close()
 
-	// Wrap callback in a goroutine so we don't throttle user typing on its
-	// performance.
-	type cbResult struct {
-		// This lets us know if the result is expired or not
-		ts     time.Time
-		output string
-	}
-	callbackCh := make(chan cbResult)
-	go func() {
-		// Initialize with empty string
-		callbackCh <- cbResult{time.Now(), p.Callback("", false)}
-		for res := range textCh {
-			if p.Debug {
-				p.print(fmt.Sprintf("tab: %v", res.tab), 12)
-			}
-			callbackCh <- cbResult{time.Now(), p.Callback(res.text, res.tab)}
-		}
-	}()
+	// We should erase previously output lines before rewriting
+	var lastOutputLines int
+	handleCB := func(s string, tab bool, enter bool) {
+		out := p.Callback(s, tab, enter)
 
-	fmt.Printf(p.Prefix) // Prompt statement
-	var lastUpdate time.Time
+		clearLines(lastOutputLines, p.Padding)
+		p.print(out, p.Padding)
+		lastOutputLines = strings.Count(out, "\n")
+	}
+
+	// Prompt statement + initial output from callback
+	fmt.Printf(p.Prefix)
+	handleCB("", false, false)
 	for {
 		select {
 		case e := <-keyCh:
@@ -141,88 +130,47 @@ func (p *Prompt) readInput(textCh chan textResult) {
 				p.print(fmt.Sprintf("error: %+v", e), 10)
 			}
 
-			oldText := p.text
-			if !p.handleKey(e, func() { term.Restore(0, oldState) }) {
+			// Should we finish?
+			if e.Key == keyboard.KeyEnter {
+				handleCB(p.text, false, true)
 				return
 			}
 
-			// Don't update callback for text navigation. (arrow keys, etc)
-			if p.text == oldText && e.Key != keyboard.KeyTab {
+			if e.Key == keyboard.KeyCtrlC {
+				cleanupFunc()
+				// always succeeds on UNIX systems
+				p, _ := os.FindProcess(os.Getpid())
+				p.Signal(os.Interrupt)
+			}
+
+			// Tab is pressed, no need to handle other keys
+			if e.Key == keyboard.KeyTab {
+				handleCB(p.text, true, false)
 				continue
 			}
 
-			lastUpdate = time.Now()
-			textCh <- textResult{p.text, e.Key == keyboard.KeyTab}
-		case res := <-callbackCh:
-			// New text entered before we could read the result
-			if res.ts.Before(lastUpdate) {
+			// Don't update callback for text navigation. (arrow keys, etc)
+			oldText := p.text
+			p.handleKey(e)
+			if p.text == oldText {
 				continue
 			}
-			p.print(res.output, p.Padding)
+
+			handleCB(p.text, false, false)
 		}
 	}
 }
 
-// Print text with 'padding' lines beneath the prompt. Returns cursor to original position.
-//
-// If we don't have enough room below the prompt, newlines are printed until we
-// do. Whereas curses and other terminal UIs will clear the entire screen, this
-// tries to be inconspicuous.
-//
-// Padded lines are not cleared. This allows us to print some output 10 lines
-// below (eg: debug info) and some other at 2 lines below.
-func (p *Prompt) print(s string, padding int) {
-	if s == "" {
-		return
-	}
-	// Create padding lines, but don't clear as there's no content.
-	for i := 0; i < padding; i++ {
-		fmt.Printf("\n")
-	}
-	// Create enough space for the output.
-	//
-	// If there are more lines to print than available between the prompt and
-	// terminal bottom, we won't be able to get the cursor back to where the
-	// user is typing.
-	//
-	// For each line we create, clear it to allow new text to replace it
-	// entirely.
-	linecnt := strings.Count(s, "\n")
-	clearLine() // otherwise the first line of 's' won't be a clean slate
-	for i := 0; i < linecnt; i++ {
-		fmt.Printf("\n")
-		clearLine()
-	}
-
-	// Go back to where we started, and save it.
-	p.cursorUp(linecnt + padding)
-	saveCursor()
-
-	// \r in ANSI moves cursor to beginning of current line. Default goes down
-	// a row without changing column position.
-	//
-	// \n without \r will make paragraphs look like a waterfall. Not a typo for
-	// CRLF
-	fmt.Print(strings.Repeat("\n\r", padding))
-	fmt.Print(strings.ReplaceAll(s, "\n", "\n\r"))
-	restoreCursor()
-}
-
-// Handles a single key press, and calls cleanup+SIGINT on ^C
+// Handles a single key press for navigation / editing. Exiting should be handled outside.
 //
 // This tries to simulate most of the keybindings from Linux's line discipline.
 // Becuase we're in raw mode, we have to do it ourselves. And because the user
 // is typing text, these are important.
-//
-// A false return means we should exit the prompt.
-func (p *Prompt) handleKey(key keyboard.KeyEvent, cleanup func()) bool {
+func (p *Prompt) handleKey(key keyboard.KeyEvent) {
 
 	switch key.Key {
+	// We don't handle Esc. User's should do ^C or Enter to finish the prompt
 	case keyboard.KeyEsc:
-		// Raw escape
-		if key.Rune == 0 {
-			return false
-		}
 		// Alt combos show up as ESC<letter>
 		switch key.Rune {
 		case 'b':
@@ -233,13 +181,6 @@ func (p *Prompt) handleKey(key keyboard.KeyEvent, cleanup func()) bool {
 			p.print(fmt.Sprintf("next word: %d", p.nextWordIndex()), 4)
 			p.cursorRight(p.nextWordIndex() - p.pos + 1)
 		}
-	case keyboard.KeyEnter:
-		return false
-	case keyboard.KeyCtrlC:
-		cleanup()
-		// always succeeds on UNIX systems
-		p, _ := os.FindProcess(os.Getpid())
-		p.Signal(os.Interrupt)
 	case keyboard.KeyArrowLeft, keyboard.KeyCtrlB:
 		p.cursorLeft(1)
 	case keyboard.KeyArrowRight, keyboard.KeyCtrlF:
@@ -276,7 +217,60 @@ func (p *Prompt) handleKey(key keyboard.KeyEvent, cleanup func()) bool {
 		debugText := fmt.Sprintf("text=%v\npos=%v\n", p.text, p.pos)
 		p.print(debugText, 15)
 	}
-	return true
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Print text with 'padding' lines beneath the prompt. Returns cursor to original position.
+//
+// If we don't have enough room below the prompt, newlines are printed until we
+// do. Whereas curses and other terminal UIs will clear the entire screen, this
+// tries to be inconspicuous.
+//
+// Padded lines are not cleared. This allows us to print some output 10 lines
+// below (eg: debug info) and some other at 2 lines below.
+func (p *Prompt) print(s string, padding int) {
+	if s == "" {
+		return
+	}
+	// Create padding lines, but don't clear as there's no content.
+	for i := 0; i < padding; i++ {
+		fmt.Printf("\n")
+	}
+	// Create enough space for the output.
+	//
+	// If there are more lines to print than available between the prompt and
+	// terminal bottom, we won't be able to get the cursor back to where the
+	// user is typing.
+	//
+	// For each line we create, clear it to allow new text to replace it
+	// entirely.
+	linecnt := strings.Count(s, "\n")
+	clearLine() // otherwise the first line of 's' won't be a clean slate
+	for i := 0; i < linecnt; i++ {
+		fmt.Printf("\n")
+		clearLine()
+	}
+
+	p.writtenLineCnt = max(p.writtenLineCnt, linecnt+padding)
+
+	// Go back to where we started, and save it.
+	cursorUp(linecnt + padding)
+	saveCursor()
+
+	// \r in ANSI moves cursor to beginning of current line. Default goes down
+	// a row without changing column position.
+	//
+	// \n without \r will make paragraphs look like a waterfall. Not a typo for
+	// CRLF
+	fmt.Print(strings.Repeat("\n\r", padding))
+	fmt.Print(strings.ReplaceAll(s, "\n", "\n\r"))
+	restoreCursor()
 }
 
 // move and update position of cursor
@@ -297,11 +291,6 @@ func (p *Prompt) cursorRight(n int) {
 	}
 	fmt.Printf("\033[%dC", n)
 	p.pos += n
-}
-
-// move cursor up in the same column
-func (p *Prompt) cursorUp(n int) {
-	fmt.Printf("\033[%dA", n)
 }
 
 // delete text behind the cursor
@@ -390,6 +379,29 @@ func eraseFromCursor() {
 // clear entire line without changing cursor position
 func clearLine() {
 	fmt.Printf("\033[2K")
+}
+
+// clear n lines, starting after padding lines, and restores cursor
+func clearLines(n int, padding int) {
+	saveCursor()
+	for i := 0; i < padding; i++ {
+		cursorDown(1)
+	}
+	for i := 0; i < n; i++ {
+		clearLine()
+		cursorDown(1)
+	}
+	restoreCursor()
+}
+
+// move cursor up in the same column
+func cursorUp(n int) {
+	fmt.Printf("\033[%dA", n)
+}
+
+// move cursor down in the same column
+func cursorDown(n int) {
+	fmt.Printf("\033[%dB", n)
 }
 
 func saveCursor() {
