@@ -83,6 +83,11 @@ func (c *ClosestMatch) CB() Callback {
 			}
 		}
 
+		// When content is empty, don't show anything but the prompt
+		if len(content) == 0 {
+			return ""
+		}
+
 		if inp == "" { // first load or backspaced text
 			topN = content[:c.MaxShown]
 		} else if !tab {
