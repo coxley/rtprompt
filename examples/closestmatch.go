@@ -20,9 +20,10 @@ func main() {
 	}
 	var selected string
 	cb := rtprompt.ClosestMatch{
-		Data:     issues,
-		OnSelect: func(s string) { selected = s },
-		MaxShown: 7,
+		Data:             issues,
+		OnSelect:         func(s string) { selected = s },
+		MaxShown:         7,
+		ShowInstructions: true,
 	}
 	prompt := rtprompt.New("Summary: ", cb.CB())
 	prompt.Wait()

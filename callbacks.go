@@ -22,10 +22,14 @@ type ClosestMatch struct {
 	OnSelect func(string)
 	MaxShown int
 
-	// default: FgWhite (aka nothing)
-	MatchColor *color.Color
+	// default: "Use <TAB> and <ENTER> to select from below. Otherwise press <ENTER> when ready"
+	Instructions     string
+	ShowInstructions bool
+
 	// default: FgBlue
 	SelectedColor *color.Color
+	// default: FgHiBlack
+	InstructionColor *color.Color
 }
 
 // CB returns a configured callback to use with Prompt
@@ -34,11 +38,14 @@ func (c *ClosestMatch) CB() Callback {
 	// later
 	delim := "::CBDELIM::"
 
-	if c.MatchColor == nil {
-		c.MatchColor = color.New(color.FgWhite)
-	}
 	if c.SelectedColor == nil {
 		c.SelectedColor = color.New(color.FgBlue)
+	}
+	if c.InstructionColor == nil {
+		c.InstructionColor = color.New(color.FgHiBlack)
+	}
+	if c.Instructions == "" {
+		c.Instructions = "Use <TAB> and <ENTER> to select from below. Otherwise press <ENTER> when ready"
 	}
 
 	var content []string
@@ -85,26 +92,22 @@ func (c *ClosestMatch) CB() Callback {
 		return c.joinLines(
 			topN,
 			preproc,
-			inp != "", // rank
 			lastSelected,
 		)
 	}
 }
 
-func (c *ClosestMatch) joinLines(lines []string, preproc func(string) string, rank bool, selected int) string {
+func (c *ClosestMatch) joinLines(lines []string, preproc func(string) string, selected int) string {
 	var output string
+	if c.ShowInstructions {
+		output += c.InstructionColor.Sprintln(c.Instructions)
+	}
 	for i, line := range lines {
 		line = preproc(line)
-		// If the input isn't ranked, text hasn't been typed. No need to
-		// color / make note
-		if !rank {
-			output += fmt.Sprintf("%s\n", line)
-			continue
-		}
 
-		// Highlight closest match if nothing has been selected yet
+		// Nothing has been selected yet
 		if i == 0 && selected == -1 {
-			output += c.MatchColor.Sprintf("%s\n", line)
+			output += fmt.Sprintln(line)
 			continue
 		}
 
@@ -115,7 +118,7 @@ func (c *ClosestMatch) joinLines(lines []string, preproc func(string) string, ra
 		}
 
 		// Plain jane text
-		output += fmt.Sprintf("%s\n", line)
+		output += fmt.Sprintln(line)
 	}
 	return output
 }
