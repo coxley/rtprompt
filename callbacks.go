@@ -89,7 +89,7 @@ func (c *ClosestMatch) CB() Callback {
 		}
 
 		if inp == "" { // first load or backspaced text
-			topN = content[:c.MaxShown]
+			topN = content[:min(len(content), c.MaxShown)]
 		} else if !tab {
 			// Only repopulate topN on non-tab entries
 			topN = cm.ClosestN(strings.ToLower(inp), c.MaxShown)
