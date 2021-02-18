@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	issues := map[string]string{}
+	issues := map[string]string{"what": ""}
 	var selected string
 	cb := rtprompt.ClosestMatch{
 		Data:             issues,
