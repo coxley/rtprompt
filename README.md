@@ -6,6 +6,12 @@ A command-line prompt that looks normal, but can show results as users type.
 
 ![Basic Example](https://raw.githubusercontent.com/coxley/rtprompt/master/examples/basic2.gif)
 
+## Notice
+
+[Bubbletea](https://github.com/charmbracelet/bubbletea/) can do this and much more. It wasn't as popular when I wrote `rtprompt` or I wasn't aware of it.
+
+Writing `bubbletea` programs is great fun, but leaving this code around as sometimes you just want the most basic thing.
+
 # Why?
 
 I wanted a way to have auto-updated results in the terminal as a user typed --
